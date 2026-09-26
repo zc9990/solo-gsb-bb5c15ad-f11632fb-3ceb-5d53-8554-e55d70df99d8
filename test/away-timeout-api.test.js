@@ -144,7 +144,59 @@ async function main() {
     assert.strictEqual(after.records.length, count0);
   });
 
-  // 6. 参数校验：缺参数 / 负数 / 小数 / 非数字均 400
+  // 6. 首个冲突分钟含已归约交接：冲突当分钟的部分链（甲→仓库）不得关闭区间
+  await test('离仓排查：冲突当分钟已归约归仓不得当作已归仓，列无法判定', async () => {
+    const prop = (await api('/api/props', {
+      method: 'POST',
+      body: JSON.stringify({ name: '回归用玉如意' }),
+    })).body;
+
+    // 第0分仓库→甲；第5分甲→仓库后又有仓库→乙、仓库→丙（归约出归仓边后暴露歧义）
+    const edges = [
+      [0, '仓库', '甲'],
+      [5, '甲', '仓库'],
+      [5, '仓库', '乙'],
+      [5, '仓库', '丙'],
+    ];
+    for (const [minute, from, to] of edges) {
+      const res = await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify({ propId: prop.id, minute, from, to }),
+      });
+      assert.strictEqual(res.status, 201);
+    }
+
+    // 阈值 5：修复前误判为 [0,5) 已归仓且时长恰等于阈值（无任何结论）
+    // （截止第5分时演示数据中折扇@5、宫灯@4 同样冲突，故按道具名过滤断言）
+    const r = (await api('/api/away-timeout?minute=5&threshold=5')).body;
+    assert.strictEqual(
+      r.overdueIntervals.filter((iv) => iv.propName === '回归用玉如意').length,
+      0
+    );
+    const und = r.undeterminableIntervals.filter((u) => u.propName === '回归用玉如意');
+    assert.strictEqual(und.length, 1);
+    const u = und[0];
+    assert.strictEqual(u.startMinute, 0);
+    assert.strictEqual(u.determinedDuration, 5);
+    assert.strictEqual(u.duration, null);
+    assert.strictEqual(u.endMinute, null);
+    assert.strictEqual(u.conflict.conflictMinute, 5);
+    // 冲突当分钟的部分链记录不计入确定记录
+    assert.deepStrictEqual(u.records.map((x) => [x.minute, x.from, x.to]), [[0, '仓库', '甲']]);
+    assert.ok(r.conflicts.some((c) => c.propName === '回归用玉如意' && c.conflictMinute === 5));
+
+    // 阈值 4：冲突前可确定 5 > 4 -> 确定超时
+    const r2 = (await api('/api/away-timeout?minute=5&threshold=4')).body;
+    const hit = r2.overdueIntervals.filter((iv) => iv.propName === '回归用玉如意');
+    assert.strictEqual(hit.length, 1);
+    assert.strictEqual(hit[0].status, 'CONFIRMED_TIMEOUT');
+    assert.deepStrictEqual(
+      [hit[0].startMinute, hit[0].endMinute, hit[0].duration],
+      [0, 5, 5]
+    );
+  });
+
+  // 7. 参数校验：缺参数 / 负数 / 小数 / 非数字均 400
   await test('离仓排查：参数校验 400', async () => {
     let res = await api('/api/away-timeout?threshold=10');
     assert.strictEqual(res.status, 400);
