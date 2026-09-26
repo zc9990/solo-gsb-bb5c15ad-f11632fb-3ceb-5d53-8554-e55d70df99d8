@@ -14,8 +14,12 @@
  *   时长 = cutoffMinute - startMinute，并标记为开放区间。
  * - 超时判定：时长「严格大于」阈值才算超时，等于阈值不算。
  *
- * 交接链冲突时（多条可接续 / 无法接续），只保留冲突前可确定的区间：
- * - 冲突分钟当分钟的最终持有人无法判定，故冲突分钟本身视为「判定不可用」；
+ * 交接链冲突时（多条可接续 / 无法接续），只有早于首个冲突分钟的「完整分钟
+ * 状态」可用于区间开闭：
+ * - 重放链在报冲突时可能已保留冲突当分钟内归约掉的边（例如该分钟先有
+ *   甲→仓库、之后才出现仓库→乙 / 仓库→丙的歧义），这些「冲突当分钟的部分链」
+ *   不得改变离仓状态，也不计入任何确定记录——该分钟全部交接完成后的最终持有人
+ *   本就无法判定，冲突分钟整体视为「判定不可用」；
  * - 此前已完整结束（已重新入仓）的区间照常保留；
  * - 冲突前已离仓且在冲突分钟仍未归仓的开放区间，其可确定时长只算到
  *   冲突分钟开始（conflictMinute - startMinute）：若该可确定时长已严格超过
@@ -60,9 +64,16 @@ function investigateAwayTimeouts(data, cutoffMinute, threshold) {
     );
     const replay = replayPropRecords(propRecords);
 
-    // 沿唯一链取「该分钟全部交接完成后」的持有人状态点（同分钟只看最终状态）
+    // 沿唯一链取「该分钟全部交接完成后」的持有人状态点（同分钟只看最终状态）。
+    // 报冲突时 chain 可能保留了冲突当分钟内已归约掉的边；该分钟的最终持有人
+    // 无法判定，这些部分链既不能开闭离仓区间，也不计入确定记录，故整体剔除，
+    // 只用早于首个冲突分钟的完整分钟状态。（无冲突时 conflict 为 null，全部保留）
+    const chainForStates = replay.ok
+      ? replay.chain
+      : replay.chain.filter((rec) => rec.minute < replay.conflict.minute);
+
     const states = [];
-    for (const rec of replay.chain) {
+    for (const rec of chainForStates) {
       if (states.length && states[states.length - 1].minute === rec.minute) {
         states[states.length - 1].holder = rec.to;
         states[states.length - 1].records.push(rec);

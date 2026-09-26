@@ -237,4 +237,82 @@ test('离仓排查：阈值 0 时所有离仓区间超时', () => {
   assert.strictEqual(r.overdueIntervals[0].duration, 1);
 });
 
+// 11. 首个冲突分钟内已归约的交接（含回到仓库）不得开闭区间
+test('离仓排查：冲突当分钟已归约的回仓边不改变离仓状态，改列无法判定', () => {
+  const data = mkData(['剑'], [
+    rec('p0', 0, WAREHOUSE, '甲'),
+    rec('p0', 5, '甲', WAREHOUSE), // 冲突当分钟先归约：回到仓库
+    rec('p0', 5, WAREHOUSE, '乙'), // 歧义：仓库同时交出两条
+    rec('p0', 5, WAREHOUSE, '丙'),
+  ]);
+
+  // 阈值 5：冲突前可确定时长 5-0=5，等于阈值（未严格超过）-> 无法判定，
+  // 不得把区间当作第5分钟已归仓
+  const r = investigateAwayTimeouts(data, 12, 5);
+  assert.strictEqual(r.overdueIntervals.length, 0);
+  assert.strictEqual(r.undeterminableIntervals.length, 1);
+  const u = r.undeterminableIntervals[0];
+  assert.strictEqual(u.startMinute, 0);
+  assert.strictEqual(u.determinedDuration, 5);
+  assert.strictEqual(u.conflict.conflictMinute, 5);
+  assert.strictEqual(u.conflict.conflictType, 'AMBIGUOUS');
+  // 冲突当分钟的部分链（含甲→仓库）不计入确定记录
+  assert.deepStrictEqual(u.records.map((x) => x.id), ['r0']);
+  assert.strictEqual(r.conflicts.length, 1);
+  // 该区间仍算一个被扫描到的离仓区间
+  assert.strictEqual(r.summary.scannedIntervals, 1);
+
+  // 阈值 4：冲突前可确定 5 > 4 -> 确定超时；止点只到冲突分钟开始，
+  // 关联记录同样不含冲突当分钟的部分链
+  const r2 = investigateAwayTimeouts(data, 12, 4);
+  assert.strictEqual(r2.undeterminableIntervals.length, 0);
+  assert.strictEqual(r2.overdueIntervals.length, 1);
+  const iv = r2.overdueIntervals[0];
+  assert.strictEqual(iv.status, INTERVAL_STATUS.CONFIRMED_TIMEOUT);
+  assert.strictEqual(iv.startMinute, 0);
+  assert.strictEqual(iv.endMinute, 5);
+  assert.strictEqual(iv.duration, 5);
+  assert.deepStrictEqual(iv.records.map((x) => x.id), ['r0']);
+});
+
+// 12. 断链冲突当分钟已归约回仓，同样不得开闭区间
+test('离仓排查：断链冲突当分钟已归约回仓仍按此前离仓状态判定', () => {
+  const data = mkData(['剑'], [
+    rec('p0', 0, WAREHOUSE, '甲'),
+    rec('p0', 5, '甲', WAREHOUSE), // 先归约回仓
+    rec('p0', 5, '丙', '丁'),     // 剩余记录无法接续：断链（此时持有人为仓库）
+  ]);
+  const r = investigateAwayTimeouts(data, 12, 5);
+  assert.strictEqual(r.overdueIntervals.length, 0);
+  assert.strictEqual(r.undeterminableIntervals.length, 1);
+  const u = r.undeterminableIntervals[0];
+  assert.strictEqual(u.determinedDuration, 5);
+  assert.strictEqual(u.conflict.conflictType, 'BROKEN');
+  assert.deepStrictEqual(u.records.map((x) => x.id), ['r0']);
+});
+
+// 13. 冲突当分钟之前已完整归仓的区间，不被冲突当分钟部分链影响
+test('离仓排查：冲突前完整归仓区间与冲突后新开区间互不干扰', () => {
+  const data = mkData(['剑'], [
+    rec('p0', 0, WAREHOUSE, '甲'),
+    rec('p0', 3, '甲', WAREHOUSE),  // [0,3) 完整归仓，时长 3
+    rec('p0', 5, WAREHOUSE, '乙'),  // 歧义：仓库同时交出两条
+    rec('p0', 5, WAREHOUSE, '丙'),
+  ]);
+  const r = investigateAwayTimeouts(data, 12, 2);
+  assert.strictEqual(r.overdueIntervals.length, 1);
+  assert.deepStrictEqual(
+    [r.overdueIntervals[0].status, r.overdueIntervals[0].startMinute,
+      r.overdueIntervals[0].endMinute, r.overdueIntervals[0].duration],
+    [INTERVAL_STATUS.CLOSED_TIMEOUT, 0, 3, 3]
+  );
+  assert.deepStrictEqual(
+    r.overdueIntervals[0].records.map((x) => x.id),
+    ['r0', 'r1']
+  );
+  // 第5分仓库是否交出无法判定 -> 无开放区间可挂，仅列冲突
+  assert.strictEqual(r.undeterminableIntervals.length, 0);
+  assert.strictEqual(r.conflicts.length, 1);
+});
+
 console.log(`\n全部 ${passed} 个离仓超时排查引擎测试通过 ✔`);

@@ -144,7 +144,53 @@ async function main() {
     assert.strictEqual(after.records.length, count0);
   });
 
-  // 6. 参数校验：缺参数 / 负数 / 小数 / 非数字均 400
+  // 6. 首个冲突分钟内已归约回仓的部分链，不得把区间误判为已归仓
+  await test('离仓排查：冲突当分钟已归约回仓仍列无法判定 / 确定超时', async () => {
+    const addProp = await api('/api/props', {
+      method: 'POST',
+      body: JSON.stringify({ name: '回归剑' }),
+    });
+    assert.strictEqual(addProp.status, 201);
+    const propId = addProp.body.id;
+
+    for (const r of [
+      { minute: 0, from: '仓库', to: '甲' },
+      { minute: 5, from: '甲', to: '仓库' }, // 冲突当分钟先归约回仓
+      { minute: 5, from: '仓库', to: '乙' }, // 歧义：仓库同时交出两条
+      { minute: 5, from: '仓库', to: '丙' },
+    ]) {
+      const add = await api('/api/records', {
+        method: 'POST',
+        body: JSON.stringify({ propId, ...r }),
+      });
+      assert.strictEqual(add.status, 201);
+    }
+
+    // 阈值 5：冲突前可确定 5 分钟，等于阈值 -> 无法判定（旧逻辑误判为已归仓）
+    const r1 = (await api('/api/away-timeout?minute=12&threshold=5')).body;
+    assert.ok(!r1.overdueIntervals.some((iv) => iv.propName === '回归剑'));
+    const und = r1.undeterminableIntervals.filter((iv) => iv.propName === '回归剑');
+    assert.strictEqual(und.length, 1);
+    const u = und[0];
+    assert.strictEqual(u.startMinute, 0);
+    assert.strictEqual(u.determinedDuration, 5);
+    assert.strictEqual(u.conflict.conflictMinute, 5);
+    assert.strictEqual(u.conflict.conflictType, 'AMBIGUOUS');
+    // 冲突当分钟的部分链不计入确定记录，只关联第 0 分钟的交出
+    assert.deepStrictEqual(u.records.map((x) => x.minute), [0]);
+
+    // 阈值 4：冲突前 5 > 4 -> 确定超时，止点只到冲突分钟开始
+    const r2 = (await api('/api/away-timeout?minute=12&threshold=4')).body;
+    assert.ok(!r2.undeterminableIntervals.some((iv) => iv.propName === '回归剑'));
+    const iv = r2.overdueIntervals.find((x) => x.propName === '回归剑');
+    assert.ok(iv);
+    assert.strictEqual(iv.status, 'CONFIRMED_TIMEOUT');
+    assert.strictEqual(iv.endMinute, 5);
+    assert.strictEqual(iv.duration, 5);
+    assert.deepStrictEqual(iv.records.map((x) => x.minute), [0]);
+  });
+
+  // 7. 参数校验：缺参数 / 负数 / 小数 / 非数字均 400
   await test('离仓排查：参数校验 400', async () => {
     let res = await api('/api/away-timeout?threshold=10');
     assert.strictEqual(res.status, 400);
