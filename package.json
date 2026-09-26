@@ -1,0 +1,16 @@
+{
+  "name": "prop-handover-verify",
+  "version": "1.0.0",
+  "description": "演出道具交接核验 Web 应用：录入道具与按分钟标记的交接记录，按时间重放并核验交接链",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/verify.test.js && node test/inventory.test.js && node test/batch.test.js && node test/responsibility.test.js && node test/batch-api.test.js && node test/responsibility-api.test.js && node test/appearance.test.js && node test/appearance-api.test.js && node test/conflict-fix.test.js && node test/conflict-fix-api.test.js && node test/signoff.test.js && node test/signoff-api.test.js && node test/signoff-plan.test.js && node test/signoff-plan-api.test.js && node test/change-impact.test.js && node test/change-impact-api.test.js && node test/away-timeout.test.js && node test/away-timeout-api.test.js && node test/holding-limit.test.js && node test/holding-limit-api.test.js && node test/busy-window.test.js && node test/busy-window-api.test.js && node test/store-commit.test.js"
+  },
+  "dependencies": {
+    "express": "4.21.2"
+  }
+}

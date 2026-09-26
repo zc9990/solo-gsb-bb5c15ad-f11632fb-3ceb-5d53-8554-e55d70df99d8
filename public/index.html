@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>演出道具交接核验</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div>
+        <h1>演出道具交接核验</h1>
+        <p class="subtitle">
+          每件道具初始归「<span id="wh-name">仓库</span>」，按分钟重放交接记录，
+          同一分钟以当前持有人匹配交出者，连成唯一交接链。
+        </p>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-add-prop" class="btn">＋ 录入道具</button>
+        <button id="btn-add-record" class="btn btn-primary">＋ 录入交接记录</button>
+        <button id="btn-batch" class="btn">🧪 批量交接预演</button>
+        <button id="btn-inventory" class="btn btn-accent">🔍 现场盘点</button>
+        <button id="btn-responsibility" class="btn">📋 人员交接责任单</button>
+        <button id="btn-appearance" class="btn">🎭 出场时段核对</button>
+        <button id="btn-conflict-fix" class="btn btn-accent">🛠 冲突修复预演</button>
+        <button id="btn-change-impact" class="btn btn-accent">🧯 变更影响预演</button>
+        <button id="btn-verified-chain" class="btn">✅ 已核实交接链</button>
+        <button id="btn-signoff-plan" class="btn btn-accent">🧩 跨道具补签计划</button>
+        <button id="btn-away-timeout" class="btn btn-accent">⏱ 连续离仓超时排查</button>
+        <button id="btn-holding-limit" class="btn btn-accent">👥 持有上限排查</button>
+        <button id="btn-busy-window" class="btn btn-accent">📈 交接忙时排查</button>
+        <button id="btn-reverify" class="btn" title="重新读取记录并按时间重放">↻ 重新核验</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 汇总 -->
+    <section id="summary" class="summary" aria-live="polite">
+      <div class="stat"><span class="stat-num" id="stat-total">-</span><span class="stat-label">道具总数</span></div>
+      <div class="stat stat-ok"><span class="stat-num" id="stat-returned">-</span><span class="stat-label">已归仓</span></div>
+      <div class="stat stat-conflict"><span class="stat-num" id="stat-conflict">-</span><span class="stat-label">交接链冲突</span></div>
+      <div class="stat stat-warn"><span class="stat-num" id="stat-notreturned">-</span><span class="stat-label">结束未归仓</span></div>
+      <div class="stat stat-muted"><span class="stat-num" id="stat-norecords">-</span><span class="stat-label">无交接记录</span></div>
+      <div class="stat stat-muted"><span class="stat-num" id="stat-endminute">-</span><span class="stat-label">演出末分钟</span></div>
+    </section>
+
+    <div id="orphan-banner" class="banner banner-error hidden"></div>
+
+    <!-- 现场盘点结果（提交后即时展示，不保存、不改写交接记录） -->
+    <section id="inventory-panel" class="panel panel-inventory hidden">
+      <div class="panel-head inventory-head">
+        <h2>🔍 现场盘点结果 · 第 <span id="inv-minute">-</span> 分钟</h2>
+        <button type="button" class="btn btn-sm" id="btn-inv-close" title="关闭盘点结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="inv-summary"></div>
+      <div id="inv-banner-ok" class="banner banner-ok hidden">该时刻账实完全一致。</div>
+      <div class="table-wrap">
+        <table class="table" id="inv-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具名称</th><th>实物持有人</th>
+              <th>账面持有人</th><th>结论</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 人员交接责任单结果（查询后即时展示，只读、不改写交接记录） -->
+    <section id="resp-panel" class="panel panel-resp hidden">
+      <div class="panel-head resp-head">
+        <h2>📋 人员交接责任单 · <span id="resp-person">-</span> · 第 <span id="resp-start">-</span> – <span id="resp-end">-</span> 分钟（起止均含）</h2>
+        <button type="button" class="btn btn-sm" id="btn-resp-close" title="关闭责任单">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="resp-summary"></div>
+      <div class="resp-holdings" id="resp-holdings"></div>
+      <div class="resp-section-title">收支明细（按实际接续顺序）</div>
+      <div class="table-wrap">
+        <table class="table" id="resp-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>分钟</th><th>道具</th><th>收/支</th>
+              <th>交出者</th><th>接收者</th><th>备注</th><th>记录</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="resp-undeterminable" class="resp-und"></div>
+    </section>
+
+    <!-- 出场时段到位核对结果（提交后即时展示，不保存、不改写交接记录） -->
+    <section id="appearance-panel" class="panel panel-appearance hidden">
+      <div class="panel-head appearance-head">
+        <h2>🎭 出场时段到位核对结果 · <span id="app-count">-</span> 行（区间左闭右开）</h2>
+        <button type="button" class="btn btn-sm" id="btn-app-close" title="关闭核对结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="app-summary"></div>
+      <div id="app-banner-ok" class="banner banner-ok hidden">全部出场行核对到位。</div>
+      <div class="table-wrap">
+        <table class="table" id="app-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具名称</th><th>出场演员</th><th>区间（左闭右开）</th>
+              <th>结论分钟</th><th>实际持有人</th><th>结论</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 已核实交接链结果（查询后即时展示，只读、不改写任何数据） -->
+    <section id="vchain-panel" class="panel panel-vchain hidden">
+      <div class="panel-head vchain-head">
+        <h2>✅ 已核实交接链 · <span id="vchain-prop-name">-</span> · 截止第 <span id="vchain-minute-label">-</span> 分钟（含）</h2>
+        <button type="button" class="btn btn-sm" id="btn-vchain-close" title="关闭结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="vchain-summary"></div>
+      <div id="vchain-blocker" class="vchain-blocker"></div>
+      <div class="resp-section-title">已核实链（按同分钟唯一链重放顺序，双方签收齐全才计入）</div>
+      <div id="vchain-flow" class="vchain-flow"></div>
+    </section>
+
+    <!-- 跨道具补签计划结果（查询后即时展示，只读、不写入任何签收 / 记录） -->
+    <section id="splan-panel" class="panel panel-splan hidden">
+      <div class="panel-head splan-head">
+        <h2>🧩 跨道具补签计划 · 截止第 <span id="splan-minute-label">-</span> 分钟（含）· 额度 <span id="splan-budget-label">-</span> 次</h2>
+        <button type="button" class="btn btn-sm" id="btn-splan-close" title="关闭计划">✕ 关闭</button>
+      </div>
+      <div id="splan-stale" class="banner banner-error hidden">
+        计划生成后数据已变化（可能已完成部分签收），结果可能过期——
+        <button type="button" class="btn btn-sm btn-primary" id="btn-splan-recalc">重新计算计划</button>
+      </div>
+      <div class="inv-summary" id="splan-summary"></div>
+      <div id="splan-banner" class="banner"></div>
+      <div class="resp-section-title">待签列表（按道具 / 分钟 / 记录 / 签收方排序；点记录打开现有签收弹窗）</div>
+      <div class="table-wrap">
+        <table class="table" id="splan-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具</th><th>分钟</th><th>交出者</th><th>接收者</th>
+              <th>待签方</th><th>待签姓名</th><th>记录</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="resp-section-title">各道具计划（从当前已核实前缀起连续补齐，各道具新增长度）</div>
+      <div class="table-wrap">
+        <table class="table" id="splan-props-table">
+          <thead>
+            <tr>
+              <th>道具</th><th>已核实前缀</th><th>本次新增长度</th><th>消耗补签次数</th>
+              <th>计划记录（新增长度）</th><th>未规划尾部 / 冲突</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="splan-conflicts" class="splan-conflicts"></div>
+      <div class="splan-readonly">计划只读：不会自动签收或修改任何记录；点击待签记录完成实际签收后，请重新计算计划。</div>
+    </section>
+
+    <!-- 道具连续离仓超时排查结果（查询后即时展示，只读、不改写记录或签收） -->
+    <section id="away-panel" class="panel panel-away hidden">
+      <div class="panel-head away-head">
+        <h2>⏱ 连续离仓超时排查 · 截止第 <span id="away-minute-label">-</span> 分钟（含）· 允许离仓 <span id="away-threshold-label">-</span> 分钟（等于阈值不算超时）</h2>
+        <button type="button" class="btn btn-sm" id="btn-away-close" title="关闭排查结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="away-summary"></div>
+      <div class="resp-section-title">超过阈值的离仓区间</div>
+      <div class="table-wrap">
+        <table class="table" id="away-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具</th><th>结论</th><th>离仓起始</th><th>区间止点</th>
+              <th>时长（分钟）</th><th>关联交接记录</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="away-undeterminable" class="resp-und"></div>
+      <div id="away-conflicts" class="splan-conflicts"></div>
+      <div class="splan-readonly">排查只读：按同分钟唯一交接链逐件重放截止时刻内的记录，不会修改任何交接记录或签收。</div>
+    </section>
+
+    <!-- 人员同时持有上限排查结果（查询后即时展示，只读、不改写记录或签收） -->
+    <section id="holding-panel" class="panel panel-holding hidden">
+      <div class="panel-head holding-head">
+        <h2>👥 同时持有上限排查 · <span id="holding-person-label">-</span> · 第 <span id="holding-start-label">-</span> – <span id="holding-end-label">-</span> 分钟（起止均含）· 上限 <span id="holding-limit-label">-</span> 件</h2>
+        <button type="button" class="btn btn-sm" id="btn-holding-close" title="关闭排查结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="holding-summary"></div>
+      <div id="holding-peak" class="holding-peak"></div>
+      <div class="resp-section-title">超过上限的连续分钟段（确定超限）</div>
+      <div class="table-wrap">
+        <table class="table" id="holding-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>连续分钟段</th><th>已知持有件数</th>
+              <th>涉及道具（确定持有）</th><th>未知道具</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="holding-undeterminable" class="resp-und"></div>
+      <div id="holding-conflicts" class="splan-conflicts"></div>
+      <div class="splan-readonly">排查只读：沿同分钟唯一交接链逐件重放窗口内记录，以交接分钟为边界合并持有状态，不会修改任何交接记录或签收。</div>
+    </section>
+
+    <!-- 人员交接忙时排查结果（查询后即时展示，只读、不改写记录或签收） -->
+    <section id="busy-panel" class="panel panel-busy hidden">
+      <div class="panel-head busy-head">
+        <h2>📈 交接忙时排查 · <span id="busy-person-label">-</span> · 窗口起点第 <span id="busy-start-label">-</span> – <span id="busy-end-label">-</span> 分 · 窗口长度 <span id="busy-window-label">-</span> 分 · 上限 <span id="busy-limit-label">-</span> 次</h2>
+        <button type="button" class="btn btn-sm" id="btn-busy-close" title="关闭排查结果">✕ 关闭</button>
+      </div>
+      <div class="inv-summary" id="busy-summary"></div>
+      <div id="busy-peak" class="busy-peak"></div>
+      <div class="resp-section-title">确定超限的窗口起点段（已知交接次数超过上限）</div>
+      <div class="table-wrap">
+        <table class="table" id="busy-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>窗口起点段</th><th>覆盖分钟</th><th>已知峰值次数</th>
+              <th>涉及记录（已确认）</th><th>冲突道具</th><th>说明</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="busy-undeterminable" class="resp-und"></div>
+      <div id="busy-conflicts" class="splan-conflicts"></div>
+      <div class="splan-readonly">排查只读：逐件沿同分钟唯一交接链重放，对每个整数起点取半开滑动窗口统计交接次数，不会修改任何交接记录或签收。</div>
+    </section>
+
+    <!-- 交接记录变更影响预演结果（只读模拟，不写入记录或签收） -->
+    <section id="impact-panel" class="panel panel-impact hidden">
+      <div class="panel-head impact-head">
+        <h2>🧯 交接记录变更影响预演 · <span id="impact-prop-name">-</span> · <span id="impact-action-label">-</span></h2>
+        <button type="button" class="btn btn-sm" id="btn-impact-close" title="关闭预演结果">✕ 关闭</button>
+      </div>
+      <div id="impact-stale" class="banner banner-error hidden">
+        预演生成后数据版本已变化（<span id="impact-rev-old"></span> → <span id="impact-rev-new"></span>），
+        以下模拟结果可能已过期——
+        <button type="button" class="btn btn-sm btn-primary" id="btn-impact-rerun">重新预演</button>
+      </div>
+      <div class="inv-summary" id="impact-summary"></div>
+      <div id="impact-change" class="impact-change"></div>
+      <div class="impact-grid">
+        <div class="impact-col impact-col-before">
+          <div class="impact-col-head">变更前（当前记录）</div>
+          <div id="impact-before"></div>
+        </div>
+        <div class="impact-col impact-col-after">
+          <div class="impact-col-head">变更后（模拟，不落盘）</div>
+          <div id="impact-after"></div>
+        </div>
+      </div>
+      <div class="resp-section-title">因此失效 / 受影响的签收（按当前内容指纹核对）</div>
+      <div class="table-wrap">
+        <table class="table" id="impact-signoff-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具</th><th>分钟</th><th>交出者</th><th>接收者</th>
+              <th>签收方</th><th>签收姓名</th><th>失效原因</th><th>记录</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="impact-gained" class="impact-gained"></div>
+      <div class="splan-readonly">预演只读：不会修改 / 删除任何交接记录，也不会写入或清除任何签收；请人工核对后，再在右下记录表中实际修改 / 删除。</div>
+    </section>
+
+    <div class="grid">
+      <!-- 左：核验结论与时间轴 -->
+      <section class="panel panel-results">
+        <div class="panel-head">
+          <h2>核验结论 · 持有时间轴</h2>
+        </div>
+        <div id="prop-results" class="prop-results"></div>
+      </section>
+
+      <!-- 右：数据管理 -->
+      <section class="panel panel-manage">
+        <div class="panel-head">
+          <h2>道具清单</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="prop-table">
+            <thead>
+              <tr><th>道具</th><th>备注</th><th class="col-actions">操作</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="panel-head panel-head-gap">
+          <h2>交接记录（按分钟排序）</h2>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="record-table">
+            <thead>
+              <tr>
+                <th>分钟</th><th>道具</th><th>交出者</th><th>接收者</th><th>备注</th>
+                <th class="col-sign">签收</th>
+                <th class="col-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 道具编辑弹窗 -->
+  <dialog id="prop-dialog" class="dialog">
+    <form method="dialog" id="prop-form">
+      <h3 id="prop-dialog-title">录入道具</h3>
+      <input type="hidden" id="prop-id" />
+      <label class="field">
+        <span>道具名称 <em>*</em></span>
+        <input type="text" id="prop-name" maxlength="40" required placeholder="例如：青龙剑" />
+      </label>
+      <label class="field">
+        <span>备注</span>
+        <input type="text" id="prop-note" maxlength="100" placeholder="用途、场次等（可选）" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="prop-save">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 记录编辑弹窗 -->
+  <dialog id="record-dialog" class="dialog">
+    <form method="dialog" id="record-form">
+      <h3 id="record-dialog-title">录入交接记录</h3>
+      <input type="hidden" id="record-id" />
+      <div class="field-row">
+        <label class="field">
+          <span>道具 <em>*</em></span>
+          <select id="record-prop" required></select>
+        </label>
+        <label class="field field-minute">
+          <span>分钟 <em>*</em></span>
+          <input type="number" id="record-minute" min="0" step="1" required placeholder="如 3" />
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span>交出者 <em>*</em></span>
+          <input type="text" id="record-from" maxlength="30" required list="people-list" placeholder="如 张三" />
+        </label>
+        <label class="field">
+          <span>接收者 <em>*</em></span>
+          <input type="text" id="record-to" maxlength="30" required list="people-list" placeholder="如 李四" />
+        </label>
+      </div>
+      <datalist id="people-list"></datalist>
+      <label class="field">
+        <span>备注</span>
+        <input type="text" id="record-note" maxlength="100" placeholder="交接场景（可选）" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="record-save">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 批量交接预演弹窗 -->
+  <dialog id="batch-dialog" class="dialog dialog-xwide">
+    <form method="dialog" id="batch-form">
+      <h3>批量交接预演</h3>
+      <p class="dialog-tip">
+        按行填写<strong>道具、分钟、交出者、接收者</strong>（校验规则与单条记录一致）。
+        「开始预演」会把整批记录与当前数据合并，按同分钟唯一链规则重放，逐件给出提交后的持有人或冲突，
+        并定位涉及的批次行号；预演<strong>不落盘</strong>。
+        受影响道具原本已冲突或合并后冲突时禁止提交；全部通过后「确认提交」一次写入全部记录。
+      </p>
+      <div class="inv-rows-bar">
+        <span class="inv-rows-title">批次行</span>
+        <button type="button" class="btn btn-sm" id="btn-batch-addrow">＋ 添加一行</button>
+      </div>
+      <div id="batch-rows" class="batch-rows"></div>
+      <div id="batch-result" class="batch-result hidden"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" class="btn" id="btn-batch-preview">🧪 开始预演</button>
+        <button type="submit" class="btn btn-primary" id="btn-batch-commit" disabled>确认提交</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 现场盘点弹窗 -->
+  <dialog id="inventory-dialog" class="dialog dialog-wide">
+    <form method="dialog" id="inventory-form">
+      <h3>演出中途现场盘点</h3>
+      <p class="dialog-tip">
+        选择盘点时刻（非负整数分钟），逐行填写道具名称与该时刻的<strong>实物持有人</strong>。
+        服务端只重放该分钟及以前的交接（该分钟全部交接完成后取账面持有人），晚于该时刻的冲突不影响本次盘点。
+        盘点仅生成即时结果，不会改写任何交接记录。
+      </p>
+      <label class="field field-minute-strong">
+        <span>盘点时刻 <em>*</em></span>
+        <input type="number" id="inv-minute-input" min="0" step="1" required placeholder="如 5" />
+      </label>
+      <div class="inv-rows-bar">
+        <span class="inv-rows-title">盘点行</span>
+        <button type="button" class="btn btn-sm" id="btn-inv-addrow">＋ 添加一行</button>
+        <button type="button" class="btn btn-sm" id="btn-inv-fillprops">按已登记道具补齐</button>
+      </div>
+      <div id="inv-rows" class="inv-rows"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="inv-submit">提交盘点</button>
+      </div>
+      <datalist id="prop-name-list"></datalist>
+    </form>
+  </dialog>
+
+  <!-- 人员交接责任单查询弹窗 -->
+  <dialog id="resp-dialog" class="dialog">
+    <form method="dialog" id="resp-form">
+      <h3>人员交接责任单</h3>
+      <p class="dialog-tip">
+        输入人员姓名与起止分钟（<strong>起止分钟均包含</strong>在收支明细内），沿用同分钟唯一交接链规则重放：
+        按实际接续顺序列出该人在时间窗内逐次接收、交出的道具与对应记录，
+        并汇总窗口起点交接前、终点交接后的持有道具。
+        窗口前或窗口内发生链冲突的道具单列为「无法判定」并标明冲突分钟，不计入确定持有与收支；
+        窗口后的冲突不影响本次结果。查询只读，不会改写任何交接记录。
+      </p>
+      <label class="field">
+        <span>人员姓名 <em>*</em></span>
+        <input type="text" id="resp-person-input" maxlength="30" required list="people-list" placeholder="如 张三" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>起始分钟（含） <em>*</em></span>
+          <input type="number" id="resp-start-input" min="0" step="1" required placeholder="如 0" />
+        </label>
+        <label class="field">
+          <span>结束分钟（含） <em>*</em></span>
+          <input type="number" id="resp-end-input" min="0" step="1" required placeholder="如 12" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="resp-submit">查询责任单</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 出场时段到位核对弹窗 -->
+  <dialog id="appearance-dialog" class="dialog dialog-xwide">
+    <form method="dialog" id="appearance-form">      <h3>出场时段到位核对</h3>
+      <p class="dialog-tip">
+        逐行填写<strong>道具、出场演员、起始 / 结束分钟</strong>，区间<strong>左闭右开 [起始, 结束)</strong>：
+        起点与区间内每个交接分钟均在<strong>该分钟全部交接完成后</strong>判定持有人，<strong>终点分钟的交接不计入</strong>。
+        按时间顺序取首个不符（返回分钟、实际持有人与导致该状态的交接记录）或链冲突（无法判定、给出冲突分钟，
+        冲突后的记录不作为确定持有）；整个区间持有人均为该演员才标为到位，区间结束后的冲突不影响结果。
+        核对只读，不会改写任何交接记录。
+      </p>
+      <div class="inv-rows-bar">
+        <span class="inv-rows-title">出场行</span>
+        <button type="button" class="btn btn-sm" id="btn-app-addrow">＋ 添加一行</button>
+        <button type="button" class="btn btn-sm" id="btn-app-fillprops">按已登记道具补齐</button>
+      </div>
+      <div id="app-rows" class="app-rows"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="app-submit">开始核对</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 交接冲突修复预演弹窗（只读，展示单条记录改动候选，不自动修改） -->
+  <dialog id="fix-dialog" class="dialog dialog-xwide">
+    <form method="dialog" id="fix-form">
+      <h3>交接冲突修复预演</h3>
+      <p class="dialog-tip">
+        选择一件<strong>交接链冲突</strong>的道具，系统围绕<strong>首个冲突分钟</strong>逐条枚举<strong>单条记录改动</strong>：
+        歧义（多条可接续）时逐条尝试删除可接续记录；断链时逐条尝试删除当分钟剩余记录，
+        或把交出者改为冲突前持有人（不与接收者相同）。每个候选都按现有同分钟唯一链规则
+        <strong>重放该道具全部记录</strong>，仅展示整链无冲突的方案（含改动记录、最终持有人与未归仓状态）。
+        预演<strong>只读、不会自动修改任何记录</strong>；方案中的记录编号可点击定位到右下原记录，人工核实后再手动编辑。
+      </p>
+      <div class="inv-rows-bar">
+        <span class="inv-rows-title">冲突道具</span>
+        <select id="fix-prop" class="fix-prop-select"></select>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-fix-run">开始预演</button>
+      </div>
+      <div id="fix-result" class="fix-result"></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>关闭</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 交接记录变更影响预演弹窗（只读模拟，不写入记录或签收） -->
+  <dialog id="impact-dialog" class="dialog">
+    <form method="dialog" id="impact-form">
+      <h3>交接记录变更影响预演</h3>
+      <p class="dialog-tip">
+        从交接记录表选择一条记录，输入新的<strong>分钟、交出者、接收者、备注</strong>或选择<strong>删除</strong>，
+        按现有规则校验后<strong>只读模拟</strong>：针对该道具分别重放<strong>变更前后同分钟唯一链</strong>，
+        并按<strong>当前内容指纹</strong>核对双方签收——被修改记录的旧签收在模拟结果中失效。
+        页面并排显示首个冲突、最终持有人、已核实前缀及其阻断记录，列出因此失效的签收。
+        预演<strong>不会写入任何记录或签收</strong>。
+      </p>
+      <label class="field">
+        <span>交接记录 <em>*</em></span>
+        <select id="impact-record" required></select>
+      </label>
+      <div id="impact-current" class="signoff-record"></div>
+      <label class="field">
+        <span>模拟操作 <em>*</em></span>
+        <select id="impact-action">
+          <option value="UPDATE">修改该记录</option>
+          <option value="DELETE">删除该记录</option>
+        </select>
+      </label>
+      <div id="impact-fields">
+        <div class="field-row">
+          <label class="field field-minute">
+            <span>分钟 <em>*</em></span>
+            <input type="number" id="impact-minute" min="0" step="1" required placeholder="如 3" />
+          </label>
+          <label class="field">
+            <span>交出者 <em>*</em></span>
+            <input type="text" id="impact-from" maxlength="30" required list="people-list" placeholder="如 张三" />
+          </label>
+          <label class="field">
+            <span>接收者 <em>*</em></span>
+            <input type="text" id="impact-to" maxlength="30" required list="people-list" placeholder="如 李四" />
+          </label>
+        </div>
+        <label class="field">
+          <span>备注</span>
+          <input type="text" id="impact-note" maxlength="100" placeholder="交接场景（可选）" />
+        </label>
+      </div>
+      <div id="impact-delete-tip" class="banner banner-error hidden">
+        将在模拟中删除该记录；其旧签收在模拟结果中一并失效（不会真的删除）。
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="impact-submit">开始预演</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 交接双方签收弹窗 -->
+  <dialog id="signoff-dialog" class="dialog">
+    <form method="dialog" id="signoff-form">
+      <h3>交接双方签收</h3>
+      <p class="dialog-tip">
+        交出者与接收者<strong>分别输入自己的姓名</strong>确认本条交接：姓名须与记录中对应角色完全一致，
+        两侧签收状态互不影响并持久保存。提交时页面携带当前记录内容指纹，
+        服务端核对道具、分钟、双方姓名与备注一致后才写入；记录被修改或删除后，旧签收立即失效，
+        过期页面的确认请求会被拒绝。
+      </p>
+      <div id="signoff-record" class="signoff-record"></div>
+      <div id="signoff-status" class="signoff-status"></div>
+      <label class="field">
+        <span>签收方 <em>*</em></span>
+        <select id="signoff-side" required></select>
+      </label>
+      <label class="field">
+        <span>签收姓名（须与所选签收方一致） <em>*</em></span>
+        <input type="text" id="signoff-name" maxlength="30" required placeholder="输入与所选角色完全一致的姓名" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>关闭</button>
+        <button type="submit" class="btn btn-primary" id="signoff-submit">确认签收</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 已核实交接链查询弹窗 -->
+  <dialog id="vchain-dialog" class="dialog">
+    <form method="dialog" id="vchain-form">
+      <h3>已核实交接链查询</h3>
+      <p class="dialog-tip">
+        选择道具与截止分钟（含）：服务端沿<strong>同分钟唯一链</strong>重放该分钟及以前的记录，
+        只有<strong>交出者与接收者均有效签收</strong>的记录才延伸已核实链；
+        遇首条缺签或原链冲突即停止，返回阻断记录与此前最后已核实持有人，
+        阻断之后的记录不计入已核实。查询只读，不改写任何数据。
+      </p>
+      <label class="field">
+        <span>道具 <em>*</em></span>
+        <select id="vchain-prop" required></select>
+      </label>
+      <label class="field">
+        <span>截止分钟（含） <em>*</em></span>
+        <input type="number" id="vchain-minute" min="0" step="1" required placeholder="如 12" />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary">查询已核实链</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 跨道具补签计划查询弹窗 -->
+  <dialog id="splan-dialog" class="dialog dialog-wide">
+    <form method="dialog" id="splan-form">
+      <h3>跨道具补签计划</h3>
+      <p class="dialog-tip">
+        输入<strong>截止分钟（含）</strong>与<strong>补签额度（最多 12 次）</strong>：系统对每件道具沿现有
+        <strong>同分钟唯一链</strong>重放并核对每条记录的<strong>签收内容指纹</strong>，
+        只从每件道具<strong>当前已核实前缀</strong>起规划<strong>连续补齐</strong>——
+        一条记录缺两侧消耗 2 次、缺一侧消耗 1 次，已有有效签收不耗额度；
+        <strong>原链首个冲突之后的记录不得规划</strong>。
+        跨道具选择延伸前缀，使<strong>新增已核实记录总数最大</strong>；同收益先取补签次数更少的方案，
+        再按道具 ID、记录分钟、记录 ID、签收方排序的待签列表取字典序最小。
+        结果列出待签姓名与对应记录（点击可打开现有签收弹窗）及各道具新增长度。
+        计划<strong>只读</strong>，不会自动签收；实际签收后请重新计算。
+      </p>
+      <div class="field-row">
+        <label class="field">
+          <span>截止分钟（含） <em>*</em></span>
+          <input type="number" id="splan-minute" min="0" step="1" required placeholder="如 12" />
+        </label>
+        <label class="field">
+          <span>补签额度（0–12 次） <em>*</em></span>
+          <input type="number" id="splan-budget" min="0" max="12" step="1" required placeholder="如 12" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary">生成补签计划</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 道具连续离仓超时排查查询弹窗 -->
+  <dialog id="away-dialog" class="dialog">
+    <form method="dialog" id="away-form">
+      <h3>道具连续离仓超时排查</h3>
+      <p class="dialog-tip">
+        输入<strong>截止分钟（含）</strong>与<strong>允许离仓分钟数</strong>：系统按现有
+        <strong>同分钟唯一交接链</strong>逐件重放截止时刻内的记录，把每次<strong>从仓库交出至重新入仓</strong>
+        视为一个离仓区间（半开区间 [起始, 止点)，时长 = 止点 − 起始）。同分钟多次转手只按该分钟交接完成后
+        <strong>最终是否在仓</strong>判断；未归仓区间截至查询时刻。时长<strong>严格超过</strong>阈值才列为超时
+        （等于阈值不算）。遇交接链冲突时只保留冲突前可确定的区间——此前已越过阈值仍列为确定超时，
+        冲突后的时长标为无法判定。查询只读，不改写任何记录或签收。
+      </p>
+      <div class="field-row">
+        <label class="field">
+          <span>截止分钟（含） <em>*</em></span>
+          <input type="number" id="away-minute" min="0" step="1" required placeholder="如 30" />
+        </label>
+        <label class="field">
+          <span>允许离仓分钟数 <em>*</em></span>
+          <input type="number" id="away-threshold" min="0" step="1" required placeholder="如 10" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary">开始排查</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 人员同时持有上限排查查询弹窗 -->
+  <dialog id="holding-dialog" class="dialog">
+    <form method="dialog" id="holding-form">
+      <h3>人员同时持有上限排查</h3>
+      <p class="dialog-tip">
+        输入<strong>人员姓名、起止分钟（起止均含）与持有件数上限</strong>：系统沿现有
+        <strong>同分钟唯一交接链</strong>逐件重放窗口内记录，以交接分钟为边界，取各道具在该分钟
+        <strong>全部交接完成后</strong>的持有人，合并出该人员的连续持有时段。
+        已知持有数<strong>严格超过</strong>上限的连续分钟段判为确定超限（等于上限不算）；
+        冲突道具<strong>自冲突分钟起视为未知</strong>——已知持有数已超上限时仍判确定超限，
+        否则含未知道具的时段标为「无法判定」（未知不计为零）；窗口结束分钟之后的冲突不影响结果。
+        查询只读，不改写任何交接记录或签收。
+      </p>
+      <label class="field">
+        <span>人员姓名 <em>*</em></span>
+        <input type="text" id="holding-person" maxlength="30" required list="people-list" placeholder="如 张三" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>起始分钟（含） <em>*</em></span>
+          <input type="number" id="holding-start" min="0" step="1" required placeholder="如 0" />
+        </label>
+        <label class="field">
+          <span>结束分钟（含） <em>*</em></span>
+          <input type="number" id="holding-end" min="0" step="1" required placeholder="如 12" />
+        </label>
+        <label class="field">
+          <span>持有件数上限 <em>*</em></span>
+          <input type="number" id="holding-limit" min="0" step="1" required placeholder="如 2" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary">开始排查</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 人员交接忙时排查查询弹窗 -->
+  <dialog id="busy-dialog" class="dialog">
+    <form method="dialog" id="busy-form">
+      <h3>人员交接忙时排查</h3>
+      <p class="dialog-tip">
+        输入<strong>人员姓名、起止分钟（窗口起点范围，起止均含）、窗口长度与交接次数上限</strong>：
+        系统对范围内的<strong>每个整数起点</strong>取半开滑动窗口 <strong>[起点, 起点+窗口长度)</strong>，
+        逐件沿现有<strong>同分钟唯一交接链</strong>重放，统计该人员在窗口内作为交出者或接收者参与的
+        交接次数（同分钟链式交接按实际可接续记录逐条计数，与录入顺序无关）。
+        计数以<strong>完整确定的分钟</strong>为边界：某道具同一分钟内先有可接续交接、随后才发生
+        歧义或断链时，该分钟的部分记录不计入已知，只计早于首个冲突分钟的记录；
+        <strong>窗口覆盖冲突分钟</strong>（起点+窗口长度 &gt; 冲突分钟）时仍标注冲突，
+        其他已知次数超过上限仍判<strong>确定超限</strong>，否则标为<strong>无法判定</strong>
+        （冲突分钟及以后的记录不当作零）；相邻同结论的窗口起点合并为起点段。
+        查询只读，不改写任何交接记录或签收。
+      </p>
+      <label class="field">
+        <span>人员姓名 <em>*</em></span>
+        <input type="text" id="busy-person" maxlength="30" required list="people-list" placeholder="如 张三" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>起始分钟（含） <em>*</em></span>
+          <input type="number" id="busy-start" min="0" step="1" required placeholder="如 0" />
+        </label>
+        <label class="field">
+          <span>结束分钟（含） <em>*</em></span>
+          <input type="number" id="busy-end" min="0" step="1" required placeholder="如 12" />
+        </label>
+        <label class="field">
+          <span>窗口长度（分钟） <em>*</em></span>
+          <input type="number" id="busy-window" min="1" step="1" required placeholder="如 3" />
+        </label>
+        <label class="field">
+          <span>交接次数上限 <em>*</em></span>
+          <input type="number" id="busy-limit" min="0" step="1" required placeholder="如 2" />
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary">开始排查</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

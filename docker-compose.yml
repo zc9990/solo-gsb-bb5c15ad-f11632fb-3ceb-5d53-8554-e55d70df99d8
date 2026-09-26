@@ -1,0 +1,23 @@
+services:
+  prop-verify:
+    build: .
+    image: prop-handover-verify:latest
+    container_name: prop-handover-verify
+    restart: unless-stopped
+    ports:
+      # 宿主机端口:容器端口；如需修改宿主机端口，改冒号左侧即可
+      - "${HOST_PORT:-3000}:3000"
+    environment:
+      # 数据文件在容器内的位置（一般无需修改）
+      DATA_FILE: /app/data/store.json
+      # 容器内监听端口（需与上面冒号右侧一致）
+      PORT: "3000"
+    volumes:
+      # 本地 JSON 数据持久化：./data/store.json
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/verify"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
